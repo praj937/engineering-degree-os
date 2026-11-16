@@ -132,23 +132,57 @@ CSV_TO_TABLE = {
 # SUPABASE CLIENT INITIALIZATION & HELPERS
 # ---------------------------------------------------------
 def get_supabase_credentials():
-    """Retrieves Supabase URL and Key from secrets, env vars, or session state."""
+    """Retrieves Supabase URL and Key from .env files, secrets, env vars, or session state."""
     url = None
     key = None
-    if "SUPABASE_URL" in st.secrets:
-        url = st.secrets["SUPABASE_URL"]
-    elif "SUPABASE_URL" in os.environ:
-        url = os.environ["SUPABASE_URL"]
-    elif "supabase_url" in st.session_state:
-        url = st.session_state["supabase_url"]
 
-    if "SUPABASE_KEY" in st.secrets:
-        key = st.secrets["SUPABASE_KEY"]
-    elif "SUPABASE_ANON_KEY" in st.secrets:
-        key = st.secrets["SUPABASE_ANON_KEY"]
-    elif "SUPABASE_KEY" in os.environ:
-        key = os.environ["SUPABASE_KEY"]
-    elif "supabase_key" in st.session_state:
+    # 1. Check local .env files
+    env_paths = [
+        BASE_DIR / ".env",
+        BASE_DIR / "engineering-degree-os" / ".env",
+        Path.cwd() / ".env",
+        Path.cwd() / "engineering-degree-os" / ".env",
+    ]
+    for ep in env_paths:
+        if ep.exists():
+            try:
+                for line in ep.read_text(encoding="utf-8").splitlines():
+                    if "=" in line and not line.strip().startswith("#"):
+                        k, v = line.split("=", 1)
+                        k_clean = k.strip()
+                        v_clean = v.strip().strip("'\"")
+                        if "SUPABASE_URL" in k_clean and not url:
+                            url = v_clean
+                        if ("SUPABASE" in k_clean and ("KEY" in k_clean or "PUBLISHABLE" in k_clean)) and not key:
+                            key = v_clean
+            except Exception:
+                pass
+
+    # 2. Check Streamlit secrets
+    if not url:
+        if "SUPABASE_URL" in st.secrets:
+            url = st.secrets["SUPABASE_URL"]
+        elif "NEXT_PUBLIC_SUPABASE_URL" in st.secrets:
+            url = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
+
+    if not key:
+        if "SUPABASE_KEY" in st.secrets:
+            key = st.secrets["SUPABASE_KEY"]
+        elif "SUPABASE_ANON_KEY" in st.secrets:
+            key = st.secrets["SUPABASE_ANON_KEY"]
+        elif "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" in st.secrets:
+            key = st.secrets["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"]
+
+    # 3. Check OS environment variables
+    if not url:
+        url = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+    if not key:
+        key = os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+
+    # 4. Check session state (manual entry in UI)
+    if not url and "supabase_url" in st.session_state and st.session_state["supabase_url"]:
+        url = st.session_state["supabase_url"]
+    if not key and "supabase_key" in st.session_state and st.session_state["supabase_key"]:
         key = st.session_state["supabase_key"]
 
     return url, key
