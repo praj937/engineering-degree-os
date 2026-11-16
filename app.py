@@ -158,20 +158,26 @@ def get_supabase_credentials():
             except Exception:
                 pass
 
-    # 2. Check Streamlit secrets
+    # 2. Check Streamlit secrets safely
     if not url:
-        if "SUPABASE_URL" in st.secrets:
-            url = st.secrets["SUPABASE_URL"]
-        elif "NEXT_PUBLIC_SUPABASE_URL" in st.secrets:
-            url = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
+        try:
+            if "SUPABASE_URL" in st.secrets:
+                url = st.secrets["SUPABASE_URL"]
+            elif "NEXT_PUBLIC_SUPABASE_URL" in st.secrets:
+                url = st.secrets["NEXT_PUBLIC_SUPABASE_URL"]
+        except Exception:
+            pass
 
     if not key:
-        if "SUPABASE_KEY" in st.secrets:
-            key = st.secrets["SUPABASE_KEY"]
-        elif "SUPABASE_ANON_KEY" in st.secrets:
-            key = st.secrets["SUPABASE_ANON_KEY"]
-        elif "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" in st.secrets:
-            key = st.secrets["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"]
+        try:
+            if "SUPABASE_KEY" in st.secrets:
+                key = st.secrets["SUPABASE_KEY"]
+            elif "SUPABASE_ANON_KEY" in st.secrets:
+                key = st.secrets["SUPABASE_ANON_KEY"]
+            elif "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY" in st.secrets:
+                key = st.secrets["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"]
+        except Exception:
+            pass
 
     # 3. Check OS environment variables
     if not url:
@@ -900,10 +906,13 @@ elif selected_page == "Ask Degree AI":
     compact_context = build_compact_context()
 
     api_key = None
-    if "GEMINI_API_KEY" in st.secrets:
-        api_key = st.secrets["GEMINI_API_KEY"]
-    elif "GEMINI_API_KEY" in os.environ:
-        api_key = os.environ["GEMINI_API_KEY"]
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+    if not api_key:
+        api_key = os.environ.get("GEMINI_API_KEY")
 
     with st.expander("⚙️ AI Configuration & Grounding Info", expanded=False):
         st.write("**Grounded Context Source:** Loaded Degree Data")
