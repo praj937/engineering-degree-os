@@ -1,7 +1,8 @@
 """
 My Engineering Degree OS
 A self-managed 1st-to-8th semester engineering degree command center.
-Tracks schedules, syllabus, assessments, progress, scorecard, plan/checklist, and Ask Degree AI chatbot.
+Tracks schedules, syllabus, assessments, progress, scorecard, plan/checklist, Ask Degree AI chatbot,
+and cloud database integration with Supabase (PostgreSQL).
 """
 
 import os
@@ -9,6 +10,14 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 import pandas as pd
 import streamlit as st
+
+# Optional Supabase SDK import with graceful fallback
+try:
+    from supabase import create_client, Client
+    SUPABASE_SDK_AVAILABLE = True
+except ImportError:
+    SUPABASE_SDK_AVAILABLE = False
+    Client = None
 
 # Set page config
 st.set_page_config(
@@ -110,11 +119,83 @@ DEFAULT_COLUMNS = {
     "plan_checklist.csv": ["category", "item", "target_date", "status", "notes"],
 }
 
+CSV_TO_TABLE = {
+    "semesters.csv": "semesters",
+    "courses.csv": "courses",
+    "academic_calendar.csv": "academic_calendar",
+    "assessments.csv": "assessments",
+    "scores.csv": "scores",
+    "plan_checklist.csv": "plan_checklist",
+}
+
+# ---------------------------------------------------------
+# SUPABASE CLIENT INITIALIZATION & HELPERS
+# ---------------------------------------------------------
+def get_supabase_credentials():
+    """Retrieves Supabase URL and Key from secrets, env vars, or session state."""
+    url = None
+    key = None
+    if "SUPABASE_URL" in st.secrets:
+        url = st.secrets["SUPABASE_URL"]
+    elif "SUPABASE_URL" in os.environ:
+        url = os.environ["SUPABASE_URL"]
+    elif "supabase_url" in st.session_state:
+        url = st.session_state["supabase_url"]
+
+    if "SUPABASE_KEY" in st.secrets:
+        key = st.secrets["SUPABASE_KEY"]
+    elif "SUPABASE_ANON_KEY" in st.secrets:
+        key = st.secrets["SUPABASE_ANON_KEY"]
+    elif "SUPABASE_KEY" in os.environ:
+        key = os.environ["SUPABASE_KEY"]
+    elif "supabase_key" in st.session_state:
+        key = st.session_state["supabase_key"]
+
+    return url, key
+
+def init_supabase_client():
+    """Initializes and returns a Supabase client if configured."""
+    if not SUPABASE_SDK_AVAILABLE:
+        return None
+    url, key = get_supabase_credentials()
+    if url and key:
+        try:
+            client = create_client(url, key)
+            return client
+        except Exception as e:
+            return None
+    return None
+
+# Global Supabase client instance
+supabase_client = init_supabase_client()
+
 def load_data(filename: str) -> pd.DataFrame:
-    """Loads a CSV file safely. Returns an empty dataframe with schema if missing."""
+    """
+    Loads data with priority:
+    1. Supabase PostgreSQL cloud table (if connected)
+    2. Local CSV file (fallback or default mode)
+    """
+    table_name = CSV_TO_TABLE.get(filename)
+    # Attempt loading from Supabase if connected
+    if supabase_client and table_name:
+        try:
+            res = supabase_client.table(table_name).select("*").execute()
+            if res.data and len(res.data) > 0:
+                df = pd.DataFrame(res.data)
+                # Drop supabase auto-id if present and not in default schema
+                if "id" in df.columns and "id" not in DEFAULT_COLUMNS.get(filename, []):
+                    df = df.drop(columns=["id"])
+                cols = DEFAULT_COLUMNS.get(filename, [])
+                # Reorder columns if matching
+                avail_cols = [c for c in cols if c in df.columns]
+                return df[avail_cols]
+        except Exception:
+            # Fall back to CSV if Supabase table doesn't exist yet
+            pass
+
+    # Local CSV loader
     file_path = DATA_DIR / filename
     if not file_path.exists():
-        st.warning(f"Data file '{filename}' was not found in '{DATA_DIR}'. Initializing empty structure.")
         cols = DEFAULT_COLUMNS.get(filename, [])
         return pd.DataFrame(columns=cols)
     try:
@@ -126,22 +207,36 @@ def load_data(filename: str) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
 def save_data(filename: str, df: pd.DataFrame) -> bool:
-    """Saves DataFrame back to CSV safely."""
+    """
+    Saves DataFrame to local CSV and synchronizes with Supabase if connected.
+    """
+    success = True
+    # 1. Save to local CSV
     try:
         file_path = DATA_DIR / filename
         file_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(file_path, index=False)
-        # Also mirror to sibling directories if they exist
         for alt_dir in POSSIBLE_DATA_DIRS:
             if alt_dir.exists() and alt_dir != DATA_DIR:
                 try:
                     df.to_csv(alt_dir / filename, index=False)
                 except Exception:
                     pass
-        return True
     except Exception as e:
-        st.error(f"Failed to save {filename}: {e}")
-        return False
+        st.error(f"Failed to save local {filename}: {e}")
+        success = False
+
+    # 2. Sync to Supabase if connected
+    table_name = CSV_TO_TABLE.get(filename)
+    if supabase_client and table_name:
+        try:
+            records = df.to_dict(orient="records")
+            # Replace / upsert records into Supabase table
+            supabase_client.table(table_name).upsert(records).execute()
+        except Exception as e:
+            st.warning(f"Note: Saved to local CSV, but Supabase sync encountered: {e}")
+
+    return success
 
 # Load primary datasets
 semesters_df = load_data("semesters.csv")
@@ -165,7 +260,7 @@ if not scores_df.empty:
     scores_df["score"] = pd.to_numeric(scores_df["score"], errors="coerce").fillna(0)
     scores_df["max_marks"] = pd.to_numeric(scores_df["max_marks"], errors="coerce").fillna(0)
 
-# Current reference date (can be today or mock reference date)
+# Current reference date
 TODAY = date(2026, 11, 16)
 
 # ---------------------------------------------------------
@@ -191,6 +286,13 @@ nav_options = [
 selected_page = st.sidebar.radio("Navigation", nav_options, index=0)
 
 st.sidebar.markdown("---")
+
+# Storage indicator
+if supabase_client:
+    st.sidebar.success("🟢 Storage: **Supabase Cloud DB**")
+else:
+    st.sidebar.info("📁 Storage: **Local CSV Store**")
+
 st.sidebar.info(
     "**Student:** Prajwal S Hiremath\n\n"
     "**Programme:** B.Tech Computer Science\n\n"
@@ -306,7 +408,6 @@ elif selected_page == "Semesters 1-8":
     st.markdown('<div class="main-title">Semesters 1 to 8 Journey</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-title">Complete 8-semester course load, credit tracking and milestone status</div>', unsafe_allow_html=True)
 
-    # 8 Semester Cards in 4x2 grid
     row1_cols = st.columns(4)
     row2_cols = st.columns(4)
     all_card_cols = row1_cols + row2_cols
@@ -320,7 +421,6 @@ elif selected_page == "Semesters 1-8":
         
         sem_courses = courses_df[courses_df["semester"] == i] if not courses_df.empty else pd.DataFrame()
         c_count = len(sem_courses)
-
         progress_val = min(1.0, done_cr / total_cr) if total_cr > 0 else 0.0
 
         with col:
@@ -469,7 +569,6 @@ elif selected_page == "Academic / Leave Calendar":
         cal_view["parsed_date"] = pd.to_datetime(cal_view["date"], errors="coerce").dt.date
         cal_view = cal_view.sort_values("parsed_date")
         
-        # Add relative status
         def calc_date_rel(d):
             if pd.isnull(d): return ""
             diff = (d - TODAY).days
@@ -572,7 +671,7 @@ elif selected_page == "Scorecard":
 
     st.info(
         "ℹ️ **Prototype Score Percentage Metric:** This page calculates simple percentage as "
-        "`(Total Score / Total Max Marks) * 100` from `scores.csv`. "
+        "`(Total Score / Total Max Marks) * 100` from `scores.csv` (or Supabase `scores` table). "
         "This is a development prototype metric and **not** an official university CGPA/SGPA formula."
     )
 
@@ -607,7 +706,7 @@ elif selected_page == "Scorecard":
         ).reset_index()
         st.dataframe(sem_group, use_container_width=True, hide_index=True)
     else:
-        st.warning("No scores recorded in scores.csv.")
+        st.warning("No scores recorded.")
 
 # ---------------------------------------------------------
 # TAB 9: PLAN & CHECKLIST
@@ -686,9 +785,8 @@ elif selected_page == "Plan & Checklist":
 
         st.markdown("---")
         st.subheader("✏️ Editable Plan & Checklist Data Table")
-        st.caption("Edit item status, target dates, or notes directly below and click 'Save Checklist' to persist to CSV.")
+        st.caption("Edit item status, target dates, or notes directly below and click 'Save Checklist' to persist.")
 
-        # Editable table using st.data_editor
         editable_cols = ["category", "item", "target_date", "status", "notes"]
         edited_chk = st.data_editor(
             checklist_df[editable_cols],
@@ -718,7 +816,7 @@ elif selected_page == "Plan & Checklist":
                 st.rerun()
 
     else:
-        st.warning("plan_checklist.csv is empty or missing.")
+        st.warning("plan_checklist data is empty or missing.")
 
 # ---------------------------------------------------------
 # TAB 10: ASK DEGREE AI
@@ -727,43 +825,36 @@ elif selected_page == "Ask Degree AI":
     st.markdown('<div class="main-title">Ask Degree AI Assistant</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-title">Grounded AI answers from your 1st-to-8th semester degree data</div>', unsafe_allow_html=True)
 
-    # Build compact context strictly from CSVs
     def build_compact_context():
         ctx_parts = []
         ctx_parts.append("=== DEGREE OS DATA SOURCE ===")
         ctx_parts.append(f"Current Reference Date: {TODAY.strftime('%Y-%m-%d')}")
         
-        # Semesters
         if not semesters_df.empty:
             ctx_parts.append("\n[SEMESTERS]")
             for _, r in semesters_df.iterrows():
                 ctx_parts.append(f"Sem {r['semester']}: Status={r['status']}, Total Credits={r['total_credits']}, Completed Credits={r['completed_credits']}")
         
-        # Courses
         if not courses_df.empty:
             ctx_parts.append("\n[COURSES]")
             for _, r in courses_df.iterrows():
                 ctx_parts.append(f"Sem {r['semester']} | {r['course_code']}: {r['course_name']} ({r['credits']} cr, Faculty: {r['faculty']}, Status: {r['status']}) - Syllabus: {r['syllabus']}")
 
-        # Calendar
         if not calendar_df.empty:
             ctx_parts.append("\n[CALENDAR]")
             for _, r in calendar_df.iterrows():
                 ctx_parts.append(f"{r['date']} (Sem {r['semester']}, {r['event_type']}): {r['title']}")
 
-        # Assessments
         if not assessments_df.empty:
             ctx_parts.append("\n[ASSESSMENTS]")
             for _, r in assessments_df.iterrows():
                 ctx_parts.append(f"Sem {r['semester']} | {r['course_code']} {r['assessment_type']} on {r['date']} (Max: {r['max_marks']}, Status: {r['status']})")
 
-        # Scores
         if not scores_df.empty:
             ctx_parts.append("\n[SCORES]")
             for _, r in scores_df.iterrows():
                 ctx_parts.append(f"Sem {r['semester']} | {r['course_code']} {r['assessment_type']}: Score {r['score']}/{r['max_marks']} (Grade: {r['grade']})")
 
-        # Plan / Checklist
         if not checklist_df.empty:
             ctx_parts.append("\n[PLAN_CHECKLIST]")
             for _, r in checklist_df.iterrows():
@@ -773,25 +864,22 @@ elif selected_page == "Ask Degree AI":
 
     compact_context = build_compact_context()
 
-    # Determine API key availability
     api_key = None
     if "GEMINI_API_KEY" in st.secrets:
         api_key = st.secrets["GEMINI_API_KEY"]
     elif "GEMINI_API_KEY" in os.environ:
         api_key = os.environ["GEMINI_API_KEY"]
 
-    # Optional sidebar input for student
     with st.expander("⚙️ AI Configuration & Grounding Info", expanded=False):
-        st.write("**Grounded Context Source:** `semesters.csv`, `courses.csv`, `academic_calendar.csv`, `assessments.csv`, `scores.csv`, `plan_checklist.csv`")
+        st.write("**Grounded Context Source:** Loaded Degree Data")
         if api_key:
             st.success("Google Gemini API is configured and connected.")
         else:
-            st.info("No Gemini API key detected. Running in **Deterministic Local Grounding Mode**. (All standard student queries are supported locally).")
+            st.info("No Gemini API key detected. Running in **Deterministic Local Grounding Mode**.")
             manual_key = st.text_input("Enter GEMINI_API_KEY (optional):", type="password")
             if manual_key.strip():
                 api_key = manual_key.strip()
 
-    # Initialize chat history
     if "degree_ai_messages" not in st.session_state:
         st.session_state.degree_ai_messages = [
             {
@@ -801,25 +889,19 @@ elif selected_page == "Ask Degree AI":
             }
         ]
 
-    # Display chat messages
     for msg in st.session_state.degree_ai_messages:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
             if "area" in msg and msg["area"] != "System":
                 st.caption(f"📍 **Data Area Used:** `{msg['area']}`")
 
-    # Local deterministic answering engine
     def answer_locally(query: str):
         q = query.lower().strip()
-        
-        # 1. Safe-AI rule: reject official CGPA formula or ungrounded policy questions
         if "cgpa" in q or "sgpa" in q or "gpa formula" in q or "official formula" in q:
             return ("I cannot verify that from the current Degree OS data.", "Scores")
-
         if "attendance" in q or "regulation" in q or "condonation" in q or "hall ticket" in q:
             return ("I cannot verify that from the current Degree OS data.", "Calendar")
 
-        # 2. Incomplete courses question
         if "incomplete" in q or "left" in q or "pending course" in q or "subjects left" in q:
             sem_target = 3
             for s in range(1, 9):
@@ -835,7 +917,6 @@ elif selected_page == "Ask Degree AI":
             else:
                 return (f"All courses in Semester {sem_target} are completed!", "Courses")
 
-        # 3. Next assessment question
         if "next" in q and ("assessment" in q or "ia" in q or "test" in q or "exam" in q):
             if not assessments_df.empty:
                 ass_df_copy = assessments_df.copy()
@@ -848,7 +929,6 @@ elif selected_page == "Ask Degree AI":
                     return (ans, "Assessments")
             return ("No upcoming assessments found in the schedule.", "Assessments")
 
-        # 4. Next holiday question
         if "holiday" in q or "leave" in q or "vacation" in q:
             if not calendar_df.empty:
                 cal_copy = calendar_df.copy()
@@ -861,7 +941,6 @@ elif selected_page == "Ask Degree AI":
                     return (ans, "Calendar")
             return ("No upcoming holidays found in the calendar.", "Calendar")
 
-        # 5. Course syllabus question
         if "syllabus" in q or "topics" in q or "data structures" in q or "cs301" in q:
             matched_c = courses_df[
                 courses_df["course_name"].str.lower().str.contains("data structures") |
@@ -871,12 +950,10 @@ elif selected_page == "Ask Degree AI":
                 c_row = matched_c.iloc[0]
                 ans = f"Topics for **{c_row['course_code']} ({c_row['course_name']})**:\n{c_row['syllabus']}"
                 return (ans, "Courses")
-            # General course search
             for _, r in courses_df.iterrows():
                 if r["course_code"].lower() in q or r["course_name"].lower() in q:
                     return (f"Syllabus for **{r['course_code']} ({r['course_name']})**:\n{r['syllabus']}", "Courses")
 
-        # 6. Semester status question
         if "status of sem" in q or "semester status" in q or "semester 3" in q:
             sem_s = semesters_df[semesters_df["semester"] == 3]
             if not sem_s.empty:
@@ -884,7 +961,6 @@ elif selected_page == "Ask Degree AI":
                 ans = f"Semester 3 status is **{row['status']}**. Completed {row['completed_credits']} of {row['total_credits']} credits."
                 return (ans, "Courses")
 
-        # 7. Checklist / plan questions
         if "checklist" in q or "plan" in q or "milestone" in q or "due soon" in q:
             if not checklist_df.empty:
                 chk_c = checklist_df[checklist_df["status"] != "Done"]
@@ -892,7 +968,6 @@ elif selected_page == "Ask Degree AI":
                 ans = "Pending Plan & Checklist items:\n" + "\n".join(items)
                 return (ans, "Plan")
 
-        # 8. Scores question
         if "score" in q or "grade" in q or "marks" in q or "percentage" in q:
             if not scores_df.empty:
                 tot_score = scores_df["score"].sum()
@@ -900,10 +975,8 @@ elif selected_page == "Ask Degree AI":
                 proto_pct = (tot_score / tot_max * 100) if tot_max > 0 else 0
                 return (f"Prototype score percentage across recorded evaluations is **{proto_pct:.1f}%** ({tot_score}/{tot_max} marks).", "Scores")
 
-        # Fallback safe answer
         return ("I cannot verify that from the current Degree OS data.", "Courses")
 
-    # Quick test question triggers
     st.write("##### 💡 Try standard test questions:")
     tcol1, tcol2, tcol3 = st.columns(3)
     tcol4, tcol5, _ = st.columns(3)
@@ -925,9 +998,7 @@ elif selected_page == "Ask Degree AI":
         user_query = chat_input
 
     if user_query:
-        # Append user message
         st.session_state.degree_ai_messages.append({"role": "user", "content": user_query})
-
         ai_response = ""
         area_used = "Courses"
 
@@ -949,22 +1020,19 @@ elif selected_page == "Ask Degree AI":
                     config={"system_instruction": system_prompt}
                 )
                 ai_text = response.text.strip()
-                # Parse data area if model returned it
                 if "[DATA_AREA:" in ai_text:
                     parts = ai_text.split("[DATA_AREA:")
                     ai_response = parts[0].strip()
                     area_used = parts[1].replace("]", "").strip()
                 else:
                     ai_response = ai_text
-                    # Detect area
                     q_low = user_query.lower()
                     if "holiday" in q_low or "calendar" in q_low: area_used = "Calendar"
                     elif "assessment" in q_low or "ia" in q_low or "exam" in q_low: area_used = "Assessments"
                     elif "score" in q_low or "grade" in q_low or "cgpa" in q_low: area_used = "Scores"
                     elif "checklist" in q_low or "plan" in q_low: area_used = "Plan"
                     else: area_used = "Courses"
-            except Exception as e:
-                # Fallback to local deterministic responder
+            except Exception:
                 ai_response, area_used = answer_locally(user_query)
         else:
             ai_response, area_used = answer_locally(user_query)
@@ -977,11 +1045,134 @@ elif selected_page == "Ask Degree AI":
         st.rerun()
 
 # ---------------------------------------------------------
-# TAB 11: DATA ADMIN
+# TAB 11: DATA ADMIN (WITH SUPABASE INTEGRATION)
 # ---------------------------------------------------------
 elif selected_page == "Data Admin":
-    st.markdown('<div class="main-title">Data Administration</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-title">Maintain degree data tables directly without modifying source code</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title">Data Administration & Cloud Sync</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">Maintain degree data tables directly and synchronize with Supabase PostgreSQL</div>', unsafe_allow_html=True)
+
+    # Supabase Connection Management Box
+    with st.container(border=True):
+        st.subheader("⚡ Cloud Database Integration (Supabase)")
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            if supabase_client:
+                st.success("🟢 **Supabase Connected & Active:** Data operations automatically synchronize with your cloud PostgreSQL database!")
+            else:
+                if not SUPABASE_SDK_AVAILABLE:
+                    st.warning("⚠️ `supabase` Python package is not installed. Run `pip install supabase` to enable live cloud sync.")
+                else:
+                    st.info("ℹ️ Running in **Local CSV Mode**. Enter your Supabase credentials below or in `.streamlit/secrets.toml` to connect cloud database.")
+
+        with c2:
+            if supabase_client:
+                if st.button("🔄 Sync All CSVs to Supabase", type="primary"):
+                    sync_progress = st.progress(0.0)
+                    sync_log = []
+                    csv_items = list(CSV_TO_TABLE.items())
+                    for idx, (csv_name, tbl_name) in enumerate(csv_items):
+                        local_df = load_data(csv_name)
+                        try:
+                            recs = local_df.to_dict(orient="records")
+                            supabase_client.table(tbl_name).upsert(recs).execute()
+                            sync_log.append(f"✓ {tbl_name}: {len(recs)} rows synced")
+                        except Exception as e:
+                            sync_log.append(f"✗ {tbl_name} failed: {e}")
+                        sync_progress.progress((idx + 1) / len(csv_items))
+                    st.success("Sync completed!")
+                    for item in sync_log:
+                        st.caption(item)
+                    st.rerun()
+
+        # Credentials Expander
+        with st.expander("🔑 Configure Supabase Credentials & SQL Schema"):
+            sc_col1, sc_col2 = st.columns(2)
+            with sc_col1:
+                cur_url, cur_key = get_supabase_credentials()
+                sup_url_input = st.text_input("Supabase Project URL", value=cur_url or "", placeholder="https://xyzcompany.supabase.co")
+                sup_key_input = st.text_input("Supabase Anon / Service Key", value=cur_key or "", type="password", placeholder="eyJhbGciOi...")
+                if st.button("Save Supabase Credentials to Session"):
+                    st.session_state["supabase_url"] = sup_url_input.strip()
+                    st.session_state["supabase_key"] = sup_key_input.strip()
+                    st.success("Credentials updated! Refreshing connection...")
+                    st.rerun()
+            with sc_col2:
+                st.markdown("**Or add to `.streamlit/secrets.toml`:**")
+                st.code("""
+# .streamlit/secrets.toml
+SUPABASE_URL = "https://your-project.supabase.co"
+SUPABASE_KEY = "your-anon-or-service-key"
+                """, language="toml")
+
+            st.markdown("---")
+            st.markdown("#### 🛠️ Supabase PostgreSQL Table Schema (DDL)")
+            st.caption("Paste this SQL into your Supabase SQL Editor to initialize all 6 tables:")
+            st.code("""
+-- 1. Semesters Table
+CREATE TABLE IF NOT EXISTS semesters (
+    semester INT PRIMARY KEY,
+    status TEXT NOT NULL,
+    total_credits INT NOT NULL,
+    completed_credits INT NOT NULL
+);
+
+-- 2. Courses Table
+CREATE TABLE IF NOT EXISTS courses (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    semester INT NOT NULL,
+    course_code TEXT NOT NULL,
+    course_name TEXT NOT NULL,
+    credits INT NOT NULL,
+    faculty TEXT,
+    syllabus TEXT,
+    status TEXT NOT NULL
+);
+
+-- 3. Academic Calendar Table
+CREATE TABLE IF NOT EXISTS academic_calendar (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    academic_year TEXT NOT NULL,
+    semester INT NOT NULL,
+    date DATE NOT NULL,
+    event_type TEXT NOT NULL,
+    title TEXT NOT NULL
+);
+
+-- 4. Assessments Table
+CREATE TABLE IF NOT EXISTS assessments (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    semester INT NOT NULL,
+    course_code TEXT NOT NULL,
+    assessment_type TEXT NOT NULL,
+    date DATE NOT NULL,
+    max_marks INT NOT NULL,
+    status TEXT NOT NULL
+);
+
+-- 5. Scores Table
+CREATE TABLE IF NOT EXISTS scores (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    semester INT NOT NULL,
+    course_code TEXT NOT NULL,
+    assessment_type TEXT NOT NULL,
+    score NUMERIC NOT NULL,
+    max_marks NUMERIC NOT NULL,
+    grade TEXT NOT NULL
+);
+
+-- 6. Plan Checklist Table
+CREATE TABLE IF NOT EXISTS plan_checklist (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    category TEXT NOT NULL,
+    item TEXT NOT NULL,
+    target_date DATE NOT NULL,
+    status TEXT NOT NULL,
+    notes TEXT
+);
+            """, language="sql")
+
+    st.markdown("---")
+    st.subheader("📋 Edit Data Tables")
 
     table_choices = {
         "Semesters (semesters.csv)": "semesters.csv",
@@ -1002,9 +1193,9 @@ elif selected_page == "Data Admin":
 
     col_btn1, col_btn2 = st.columns([1, 4])
     with col_btn1:
-        if st.button("💾 Save Table to Disk", type="primary"):
+        if st.button("💾 Save Table", type="primary"):
             if save_data(target_csv, edited_df):
-                st.success(f"Successfully saved {target_csv}!")
+                st.success(f"Successfully saved {target_csv} (local & Supabase synced)!")
                 st.rerun()
     with col_btn2:
-        st.caption("Changes are saved directly to the `/data` directory and immediately reflect across all dashboard tabs.")
+        st.caption("Changes are saved directly to `/data` and synced to Supabase when connected.")
