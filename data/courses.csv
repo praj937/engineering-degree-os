@@ -1,0 +1,26 @@
+semester,course_code,course_name,credits,faculty,syllabus,status
+1,MA101,Engineering Mathematics I,4,Dr. Sharma,"Matrices; calculus; differential equations",Completed
+1,PH101,Engineering Physics,4,Dr. Raman,"Waves; optics; semiconductors; lasers",Completed
+1,CS101,Programming in C,4,Prof. Alan,"C syntax; pointers; memory allocation; file IO",Completed
+2,MA201,Engineering Mathematics II,4,Dr. Sharma,"Linear algebra; Laplace transforms; Fourier series",Completed
+2,CS201,Object Oriented Programming,4,Prof. Alan,"OOP concepts; classes; inheritance; polymorphism; Java",Completed
+2,EC201,Digital Electronics,4,Prof. Sarah,"Logic gates; boolean algebra; flip-flops; counters",Completed
+3,CS301,Data Structures,4,Prof. Grace,"Stacks; queues; trees; graphs; sorting algorithms",In Progress
+3,CS302,Computer Architecture,4,Prof. John,"Instruction set; pipeline; cache memory; ALU design",In Progress
+3,CS303,Discrete Mathematics,4,Dr. Sharma,"Set theory; graph theory; combinatorics; recurrence relations",Completed
+3,CS304,Database Management Systems,4,Prof. Grace,"Relational model; SQL; normalization; indexing; transactions",In Progress
+4,CS401,Operating Systems,4,Prof. Linus,"Process management; CPU scheduling; synchronization; virtual memory",Not Started
+4,CS402,Design & Analysis of Algorithms,4,Prof. Grace,"Divide & conquer; dynamic programming; greedy algorithms; NP-completeness",Not Started
+4,CS403,Theory of Computation,4,Dr. Turing,"Automata theory; regular expressions; Turing machines; decidability",Not Started
+5,CS501,Computer Networks,4,Prof. Cerf,"OSI model; TCP/IP; routing algorithms; socket programming",Not Started
+5,CS502,Software Engineering,4,Prof. Martin,"Agile methodology; UML; CI/CD; software testing",Not Started
+5,CS503,Artificial Intelligence,4,Dr. McCarthy,"Search algorithms; knowledge representation; heuristic search",Not Started
+6,CS601,Compiler Design,4,Prof. Aho,"Lexical analysis; parsing; syntax directed translation; code generation",Not Started
+6,CS602,Web Technologies & Cloud,4,Prof. Berners,"REST APIs; full-stack architecture; microservices; cloud deployment",Not Started
+6,CS603,Machine Learning,4,Dr. Ng,"Supervised learning; unsupervised learning; regression; neural networks",Not Started
+7,CS701,Information & Cyber Security,4,Prof. Rivest,"Cryptography; RSA; network security protocols; ethical hacking",Not Started
+7,CS702,Big Data Analytics,4,Prof. Dean,"MapReduce; Hadoop ecosystem; Spark; distributed data processing",Not Started
+7,CS703,Elective I - Deep Learning,4,Dr. Hinton,"CNNs; RNNs; Transformers; PyTorch; model evaluation",Not Started
+8,CS801,Major Capstone Project,10,Department Committee,"Project execution; thesis documentation; defense viva; deployment",Not Started
+8,CS802,Industrial Internship,4,Industry Mentor,"16-week industry work; weekly reports; final employer evaluation",Not Started
+8,CS803,Elective II - Edge Computing & IoT,4,Prof. Ashton,"Embedded systems; sensor networks; MQTT; edge inferencing",Not Started

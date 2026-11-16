@@ -1,0 +1,11 @@
+semester,course_code,assessment_type,date,max_marks,status
+3,CS301,IA1,2026-11-10,30,Completed
+3,CS301,Assignment,2026-11-18,10,Planned
+3,CS302,IA1,2026-11-25,30,Planned
+3,CS304,IA1,2026-11-28,30,Planned
+3,CS301,IA2,2026-12-02,30,Planned
+3,CS301,Lab Evaluation,2026-12-05,25,Planned
+3,CS304,Project Review,2026-12-10,25,Planned
+3,CS301,End Semester,2026-12-22,100,Planned
+3,CS302,End Semester,2026-12-26,100,Planned
+3,CS304,End Semester,2026-12-29,100,Planned
