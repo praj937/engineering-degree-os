@@ -133,6 +133,6 @@ Degree AI is strictly constrained to prevent hallucination:
 
 - **Team / Student:** Prajwal S Hiremath
 - **GitHub Repository URL:** [https://github.com/praj937/engineering-degree-os](https://github.com/praj937/engineering-degree-os)
-- **Live Streamlit App URL:** [https://engineering-degree-os.streamlit.app](https://engineering-degree-os.streamlit.app) *(or deployed Streamlit Community Cloud URL)*
+- **Live Streamlit App URL:** [https://engineering-degree-os-czzwagvsqtnehhclnfndhd.streamlit.app/](https://engineering-degree-os-czzwagvsqtnehhclnfndhd.streamlit.app/)
 - **One failure/safety example:** Question: *"What is my official university CGPA formula?"* ➔ Response: *"I cannot verify that from the current Degree OS data."* (Safe-AI rule strictly enforced).
 - **One improvement for next version:** Add PDF syllabus parsing with automatic course extraction and attendance percentage tracking with condonation alerts.
