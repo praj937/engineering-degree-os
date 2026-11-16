@@ -314,7 +314,8 @@ nav_options = [
     "Scorecard",
     "Plan & Checklist",
     "Ask Degree AI",
-    "Data Admin"
+    "Data Admin",
+    "Student Feedback (Supabase RLS)"
 ]
 
 selected_page = st.sidebar.radio("Navigation", nav_options, index=0)
@@ -1233,3 +1234,126 @@ CREATE TABLE IF NOT EXISTS plan_checklist (
                 st.rerun()
     with col_btn2:
         st.caption("Changes are saved directly to `/data` and synced to Supabase when connected.")
+
+# ---------------------------------------------------------
+# TAB 12: STUDENT FEEDBACK (SUPABASE AUTH + RLS)
+# ---------------------------------------------------------
+elif selected_page == "Student Feedback (Supabase RLS)":
+    st.markdown('<div class="main-title">Student Feedback (Supabase Auth & RLS)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">Authenticated, secure feedback storage with Row Level Security (RLS)</div>', unsafe_allow_html=True)
+
+    sup_url, sup_key = get_supabase_credentials()
+
+    if not sup_url or not sup_key:
+        st.error("Please configure SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in secrets or .env.")
+        st.stop()
+
+    if not SUPABASE_SDK_AVAILABLE:
+        st.error("supabase Python library is not installed. Run `pip install supabase`.")
+        st.stop()
+
+    # Per-browser session client (Do NOT share across sessions via cache_resource)
+    try:
+        if "_supabase_auth_client" not in st.session_state:
+            st.session_state["_supabase_auth_client"] = create_client(sup_url, sup_key)
+        auth_db = st.session_state["_supabase_auth_client"]
+        current_session = auth_db.auth.get_session()
+    except Exception as e:
+        st.error(f"Could not connect to Supabase: {e}")
+        st.stop()
+
+    # If user is not signed in, show Sign In form
+    if current_session is None:
+        st.subheader("🔐 Student Sign In")
+        st.caption("Sign in with your verified Supabase user account to view and submit feedback.")
+
+        with st.form("student_sign_in", clear_on_submit=True):
+            user_email = st.text_input("Student Email", placeholder="e.g. student@engineeringos.com")
+            user_pwd = st.text_input("Password", type="password")
+            submitted_login = st.form_submit_button("Sign In", type="primary")
+
+        if submitted_login:
+            if not user_email.strip() or not user_pwd:
+                st.warning("Please enter both email and password.")
+            else:
+                try:
+                    auth_res = auth_db.auth.sign_in_with_password(
+                        {"email": user_email.strip(), "password": user_pwd}
+                    )
+                    if auth_res.session is not None:
+                        st.success("Signed in successfully!")
+                        st.rerun()
+                    else:
+                        st.error("No session created. Please check your credentials.")
+                except Exception as ex:
+                    st.error(f"Sign in failed: {ex}")
+
+        with st.expander("💡 Demo Credentials for Evaluation", expanded=True):
+            st.write("You can test with these pre-configured & confirmed accounts:")
+            st.write("- **User 1:** `student@engineeringos.com` / `DegreeOSPassword2026!`")
+            st.write("- **User 2:** `student_a@engineeringos.com` / `DegreeOSPassword2026!`")
+            st.caption("Due to Row Level Security, User 1 and User 2 will only see their own feedback records.")
+
+        st.stop()
+
+    # Signed in state
+    user_info = current_session.user
+    st.info(f"👤 Signed in as: **{user_info.email}**")
+
+    if st.button("🚪 Sign out"):
+        try:
+            auth_db.auth.sign_out({"scope": "local"})
+        except Exception:
+            pass
+        st.session_state.pop("_supabase_auth_client", None)
+        st.rerun()
+
+    st.markdown("---")
+    st.subheader("📝 Submit New Feedback")
+    with st.form("feedback_form"):
+        f_name = st.text_input("Your Name", max_chars=100)
+        f_message = st.text_area("Message / Feedback", max_chars=2000)
+        submit_fb = st.form_submit_button("Save Feedback to Supabase", type="primary")
+
+    if submit_fb:
+        f_name_clean = f_name.strip()
+        f_msg_clean = f_message.strip()
+        if not f_name_clean or not f_msg_clean:
+            st.warning("Please enter both your name and message.")
+        else:
+            try:
+                # user_id, id, and created_at are automatically assigned by database auth.uid()
+                fb_result = (
+                    auth_db.table("app_feedback")
+                    .insert({"name": f_name_clean, "message": f_msg_clean})
+                    .execute()
+                )
+                st.success("Feedback successfully saved in Supabase!")
+                if fb_result.data and len(fb_result.data) > 0:
+                    st.caption(f"Record ID: `{fb_result.data[0]['id']}`")
+                st.rerun()
+            except Exception as fb_err:
+                st.error(f"Failed to save feedback: {fb_err}")
+
+    st.markdown("---")
+    st.subheader("📋 Your Saved Feedback (Protected by RLS)")
+    st.caption("Only feedback created by your account is visible here. Other users cannot see your rows.")
+
+    if st.button("🔄 Refresh Records"):
+        st.rerun()
+
+    try:
+        read_res = (
+            auth_db.table("app_feedback")
+            .select("id, name, message, created_at")
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        if read_res.data and len(read_res.data) > 0:
+            st.dataframe(read_res.data, hide_index=True, use_container_width=True)
+        else:
+            st.info("No feedback saved for this account yet.")
+    except Exception as read_err:
+        st.error(f"Could not load records: {read_err}")
+
